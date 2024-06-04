@@ -275,11 +275,11 @@ func (p *Provisioner) NewScheduler(ctx context.Context, pods []*v1.Pod, stateNod
 	if err != nil {
 		return nil, fmt.Errorf("tracking topology counts, %w", err)
 	}
-	daemonSetPods, err := p.getDaemonSetPods(ctx)
+	daemonSetPodSpecs, err := p.getDaemonSetPodSpecs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting daemon pods, %w", err)
 	}
-	return scheduler.NewScheduler(ctx, p.kubeClient, lo.ToSlicePtr(nodePoolList.Items), p.cluster, stateNodes, topology, instanceTypes, daemonSetPods, p.recorder), nil
+	return scheduler.NewScheduler(ctx, p.kubeClient, lo.ToSlicePtr(nodePoolList.Items), p.cluster, stateNodes, topology, instanceTypes, daemonSetPodSpecs, p.recorder), nil
 }
 
 func (p *Provisioner) Schedule(ctx context.Context) (scheduler.Results, error) {
@@ -386,30 +386,14 @@ func instanceTypeList(names []string) string {
 	return itSb.String()
 }
 
-func (p *Provisioner) getDaemonSetPods(ctx context.Context) ([]*v1.Pod, error) {
+func (p *Provisioner) getDaemonSetPodSpecs(ctx context.Context) ([]*v1.PodSpec, error) {
 	daemonSetList := &appsv1.DaemonSetList{}
 	if err := p.kubeClient.List(ctx, daemonSetList); err != nil {
 		return nil, fmt.Errorf("listing daemonsets, %w", err)
 	}
 
-	return lo.Map(daemonSetList.Items, func(d appsv1.DaemonSet, _ int) *v1.Pod {
-		pod := p.cluster.GetDaemonSetPod(&d)
-		if pod == nil {
-			pod = &v1.Pod{Spec: d.Spec.Template.Spec}
-		}
-		// Replacing retrieved pod affinity with daemonset pod template required node affinity since this is overridden
-		// by the daemonset controller during pod creation
-		// https://github.com/kubernetes/kubernetes/blob/c5cf0ac1889f55ab51749798bec684aed876709d/pkg/controller/daemon/util/daemonset_util.go#L176
-		if d.Spec.Template.Spec.Affinity != nil && d.Spec.Template.Spec.Affinity.NodeAffinity != nil && d.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-			if pod.Spec.Affinity == nil {
-				pod.Spec.Affinity = &v1.Affinity{}
-			}
-			if pod.Spec.Affinity.NodeAffinity == nil {
-				pod.Spec.Affinity.NodeAffinity = &v1.NodeAffinity{}
-			}
-			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = d.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
-		}
-		return pod
+	return lo.Map(daemonSetList.Items, func(d appsv1.DaemonSet, _ int) *v1.PodSpec {
+		return &d.Spec.Template.Spec
 	}), nil
 }
 

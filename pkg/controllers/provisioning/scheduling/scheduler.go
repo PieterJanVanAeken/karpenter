@@ -46,7 +46,7 @@ import (
 
 func NewScheduler(ctx context.Context, kubeClient client.Client, nodePools []*v1beta1.NodePool,
 	cluster *state.Cluster, stateNodes []*state.StateNode, topology *Topology,
-	instanceTypes map[string][]*cloudprovider.InstanceType, daemonSetPods []*v1.Pod,
+	instanceTypes map[string][]*cloudprovider.InstanceType, daemonSetPodSpecs []*v1.PodSpec,
 	recorder events.Recorder) *Scheduler {
 
 	// if any of the nodePools add a taint with a prefer no schedule effect, we add a toleration for the taint
@@ -68,12 +68,12 @@ func NewScheduler(ctx context.Context, kubeClient client.Client, nodePools []*v1
 		topology:           topology,
 		cluster:            cluster,
 		instanceTypes:      instanceTypes,
-		daemonOverhead:     getDaemonOverhead(templates, daemonSetPods),
+		daemonOverhead:     getDaemonOverhead(templates, daemonSetPodSpecs),
 		recorder:           recorder,
 		preferences:        &Preferences{ToleratePreferNoSchedule: toleratePreferNoSchedule},
 		remainingResources: lo.SliceToMap(nodePools, func(np *v1beta1.NodePool) (string, v1.ResourceList) { return np.Name, v1.ResourceList(np.Spec.Limits) }),
 	}
-	s.calculateExistingNodeClaims(stateNodes, daemonSetPods)
+	s.calculateExistingNodeClaims(stateNodes, daemonSetPodSpecs)
 	return s
 }
 
@@ -84,7 +84,7 @@ type Scheduler struct {
 	nodeClaimTemplates []*NodeClaimTemplate
 	remainingResources map[string]v1.ResourceList               // (NodePool name) -> remaining resources for that NodePool
 	instanceTypes      map[string][]*cloudprovider.InstanceType // (NodePool name) -> instance types for NodePool
-	daemonOverhead     map[*NodeClaimTemplate]v1.ResourceList
+	daemonOverhead     map[*NodeClaimTemplate]map[*cloudprovider.InstanceType]v1.ResourceList
 	preferences        *Preferences
 	topology           *Topology
 	cluster            *state.Cluster
@@ -281,9 +281,8 @@ func (s *Scheduler) add(ctx context.Context, pod *v1.Pod) error {
 		}
 		nodeClaim := NewNodeClaim(nodeClaimTemplate, s.topology, s.daemonOverhead[nodeClaimTemplate], instanceTypes)
 		if err := nodeClaim.Add(pod); err != nil {
-			errs = multierr.Append(errs, fmt.Errorf("incompatible with nodepool %q, daemonset overhead=%s, %w",
+			errs = multierr.Append(errs, fmt.Errorf("incompatible with nodepool %q, %w",
 				nodeClaimTemplate.NodePoolName,
-				resources.String(s.daemonOverhead[nodeClaimTemplate]),
 				err))
 			continue
 		}
@@ -295,21 +294,21 @@ func (s *Scheduler) add(ctx context.Context, pod *v1.Pod) error {
 	return errs
 }
 
-func (s *Scheduler) calculateExistingNodeClaims(stateNodes []*state.StateNode, daemonSetPods []*v1.Pod) {
+func (s *Scheduler) calculateExistingNodeClaims(stateNodes []*state.StateNode, daemonSetPodSpecs []*v1.PodSpec) {
 	// create our existing nodes
 	for _, node := range stateNodes {
 		// Calculate any daemonsets that should schedule to the inflight node
-		var daemons []*v1.Pod
-		for _, p := range daemonSetPods {
-			if err := scheduling.Taints(node.Taints()).Tolerates(p); err != nil {
+		var matchingDaemonSetPodSpecs []*v1.PodSpec
+		for _, dsps := range daemonSetPodSpecs {
+			if err := scheduling.Taints(node.Taints()).ToleratesPodSpec(dsps); err != nil {
 				continue
 			}
-			if err := scheduling.NewLabelRequirements(node.Labels()).Compatible(scheduling.NewPodRequirements(p)); err != nil {
+			if err := scheduling.NewLabelRequirements(node.Labels()).Compatible(scheduling.NewPodSpecRequirements(dsps)); err != nil {
 				continue
 			}
-			daemons = append(daemons, p)
+			matchingDaemonSetPodSpecs = append(matchingDaemonSetPodSpecs, dsps)
 		}
-		s.existingNodes = append(s.existingNodes, NewExistingNode(node, s.topology, resources.RequestsForPods(daemons...)))
+		s.existingNodes = append(s.existingNodes, NewExistingNode(node, s.topology, resources.RequestsForPodSpecs(matchingDaemonSetPodSpecs...)))
 
 		// We don't use the status field and instead recompute the remaining resources to ensure we have a consistent view
 		// of the cluster during scheduling.  Depending on how node creation falls out, this will also work for cases where
@@ -332,21 +331,24 @@ func (s *Scheduler) calculateExistingNodeClaims(stateNodes []*state.StateNode, d
 	})
 }
 
-func getDaemonOverhead(nodeClaimTemplates []*NodeClaimTemplate, daemonSetPods []*v1.Pod) map[*NodeClaimTemplate]v1.ResourceList {
-	overhead := map[*NodeClaimTemplate]v1.ResourceList{}
+func getDaemonOverhead(nodeClaimTemplates []*NodeClaimTemplate, daemonSetPodSpecs []*v1.PodSpec) map[*NodeClaimTemplate]map[*cloudprovider.InstanceType]v1.ResourceList {
+	overhead := map[*NodeClaimTemplate]map[*cloudprovider.InstanceType]v1.ResourceList{}
 
 	for _, nodeClaimTemplate := range nodeClaimTemplates {
-		var daemons []*v1.Pod
-		for _, p := range daemonSetPods {
-			if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).Tolerates(p); err != nil {
-				continue
+		for _, it := range nodeClaimTemplate.InstanceTypeOptions {
+			var matchingDaemonSetPodSpecs []*v1.PodSpec
+			for _, dsps := range daemonSetPodSpecs {
+				if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).ToleratesPodSpec(dsps); err != nil {
+					continue
+				}
+				if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodSpecRequirements(dsps), scheduling.AllowUndefinedWellKnownLabels); err != nil {
+					continue
+				}
+
+				matchingDaemonSetPodSpecs = append(matchingDaemonSetPodSpecs, dsps)
 			}
-			if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p), scheduling.AllowUndefinedWellKnownLabels); err != nil {
-				continue
-			}
-			daemons = append(daemons, p)
+			overhead[nodeClaimTemplate][it] = resources.RequestsForPodSpecs(matchingDaemonSetPodSpecs...)
 		}
-		overhead[nodeClaimTemplate] = resources.RequestsForPods(daemons...)
 	}
 	return overhead
 }

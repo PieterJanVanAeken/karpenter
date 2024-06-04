@@ -54,7 +54,7 @@ var _ = Describe("Resources", func() {
 					},
 				},
 			})
-			podResources := resources.Ceiling(pod)
+			podResources := resources.Ceiling(&pod.Spec)
 			ExpectResources(podResources.Requests, v1.ResourceList{
 				v1.ResourceCPU:    resource.MustParse("3"),
 				v1.ResourceMemory: resource.MustParse("3Gi"),
@@ -90,7 +90,7 @@ var _ = Describe("Resources", func() {
 					},
 				},
 			})
-			podResources := resources.Ceiling(pod)
+			podResources := resources.Ceiling(&pod.Spec)
 			ExpectResources(podResources.Requests, v1.ResourceList{
 				v1.ResourceCPU:    resource.MustParse("10"),
 				v1.ResourceMemory: resource.MustParse("5Gi"),
@@ -122,7 +122,7 @@ var _ = Describe("Resources", func() {
 					},
 				},
 			})
-			podResources := resources.Ceiling(pod)
+			podResources := resources.Ceiling(&pod.Spec)
 			ExpectResources(podResources.Requests, v1.ResourceList{
 				v1.ResourceCPU:    resource.MustParse("14"),
 				v1.ResourceMemory: resource.MustParse("4Gi"),
@@ -155,7 +155,7 @@ var _ = Describe("Resources", func() {
 					},
 				},
 			})
-			podResources := resources.Ceiling(pod)
+			podResources := resources.Ceiling(&pod.Spec)
 			ExpectResources(podResources.Requests, v1.ResourceList{
 				v1.ResourceCPU:    resource.MustParse("6"),
 				v1.ResourceMemory: resource.MustParse("4Gi"),
@@ -209,7 +209,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("31"),
 					v1.ResourceMemory: resource.MustParse("31Gi"),
@@ -262,7 +262,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("14"),
 					v1.ResourceMemory: resource.MustParse("14Gi"),
@@ -332,7 +332,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("25"),
 					v1.ResourceMemory: resource.MustParse("25Gi"),
@@ -410,7 +410,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("10"),
 					v1.ResourceMemory: resource.MustParse("10Gi"),
@@ -452,7 +452,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("25"),
 					v1.ResourceMemory: resource.MustParse("9Gi"),
@@ -491,7 +491,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("9"),
 					v1.ResourceMemory: resource.MustParse("25Gi"),
@@ -523,7 +523,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("14"),
 					v1.ResourceMemory: resource.MustParse("6Gi"),
@@ -555,7 +555,7 @@ var _ = Describe("Resources", func() {
 						},
 					},
 				})
-				podResources := resources.Ceiling(pod)
+				podResources := resources.Ceiling(&pod.Spec)
 				ExpectResources(podResources.Requests, v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("14"),
 					v1.ResourceMemory: resource.MustParse("6Gi"),

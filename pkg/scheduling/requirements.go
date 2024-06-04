@@ -109,6 +109,38 @@ func newPodRequirements(pod *v1.Pod, typ podRequirementType) Requirements {
 	return requirements
 }
 
+// NewPodSpecRequirements constructs requirements from a PodSpec and treats any preferred requirements as required.
+func NewPodSpecRequirements(podspec *v1.PodSpec) Requirements {
+	return newPodSpecRequirements(podspec, podRequirementTypeAll)
+}
+
+// NewStrictPodSpecRequirements constructs requirements from a PodSpec and only includes true requirements (not preferences).
+func NewStrictPodSpecPodRequirements(podspec *v1.PodSpec) Requirements {
+	return newPodSpecRequirements(podspec, podRequirementTypeRequiredOnly)
+}
+
+func newPodSpecRequirements(podspec *v1.PodSpec, typ podRequirementType) Requirements {
+	requirements := NewLabelRequirements(podspec.NodeSelector)
+	if podspec.Affinity == nil || podspec.Affinity.NodeAffinity == nil {
+		return requirements
+	}
+	if typ == podRequirementTypeAll {
+		// The legal operators for pod affinity and anti-affinity are In, NotIn, Exists, DoesNotExist.
+		// Select heaviest preference and treat as a requirement. An outer loop will iteratively unconstrain them if unsatisfiable.
+		if preferred := podspec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution; len(preferred) > 0 {
+			sort.Slice(preferred, func(i int, j int) bool { return preferred[i].Weight > preferred[j].Weight })
+			requirements.Add(NewNodeSelectorRequirements(preferred[0].Preference.MatchExpressions...).Values()...)
+		}
+	}
+
+	// Select first requirement. An outer loop will iteratively remove OR requirements if unsatisfiable
+	if podspec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil &&
+		len(podspec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms) > 0 {
+		requirements.Add(NewNodeSelectorRequirements(podspec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions...).Values()...)
+	}
+	return requirements
+}
+
 // HasPreferredNodeAffinity returns true if the pod has a preferred node affinity term
 func HasPreferredNodeAffinity(p *v1.Pod) bool {
 	if p == nil {

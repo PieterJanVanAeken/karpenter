@@ -34,15 +34,15 @@ import (
 type NodeClaim struct {
 	NodeClaimTemplate
 
-	Pods            []*v1.Pod
-	topology        *Topology
-	hostPortUsage   *scheduling.HostPortUsage
-	daemonResources v1.ResourceList
+	Pods          []*v1.Pod
+	topology      *Topology
+	hostPortUsage *scheduling.HostPortUsage
+	daemonSpecs   map[*cloudprovider.InstanceType]v1.ResourceList
 }
 
 var nodeID int64
 
-func NewNodeClaim(nodeClaimTemplate *NodeClaimTemplate, topology *Topology, daemonResources v1.ResourceList, instanceTypes []*cloudprovider.InstanceType) *NodeClaim {
+func NewNodeClaim(nodeClaimTemplate *NodeClaimTemplate, topology *Topology, daemonSpecs map[*cloudprovider.InstanceType]v1.ResourceList, instanceTypes []*cloudprovider.InstanceType) *NodeClaim {
 	// Copy the template, and add hostname
 	hostname := fmt.Sprintf("hostname-placeholder-%04d", atomic.AddInt64(&nodeID, 1))
 	topology.Register(v1.LabelHostname, hostname)
@@ -51,19 +51,18 @@ func NewNodeClaim(nodeClaimTemplate *NodeClaimTemplate, topology *Topology, daem
 	template.Requirements.Add(nodeClaimTemplate.Requirements.Values()...)
 	template.Requirements.Add(scheduling.NewRequirement(v1.LabelHostname, v1.NodeSelectorOpIn, hostname))
 	template.InstanceTypeOptions = instanceTypes
-	template.Spec.Resources.Requests = daemonResources
 
 	return &NodeClaim{
 		NodeClaimTemplate: template,
 		hostPortUsage:     scheduling.NewHostPortUsage(),
 		topology:          topology,
-		daemonResources:   daemonResources,
+		daemonSpecs:       daemonSpecs,
 	}
 }
 
 func (n *NodeClaim) Add(pod *v1.Pod) error {
 	// Check Taints
-	if err := scheduling.Taints(n.Spec.Taints).Tolerates(pod); err != nil {
+	if err := scheduling.Taints(n.Spec.Taints).ToleratesPod(pod); err != nil {
 		return err
 	}
 
@@ -100,12 +99,11 @@ func (n *NodeClaim) Add(pod *v1.Pod) error {
 	// Check instance type combinations
 	requests := resources.Merge(n.Spec.Resources.Requests, resources.RequestsForPods(pod))
 
-	filtered := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, requests)
+	filtered := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, n.daemonSpecs, requests)
 
 	if len(filtered.remaining) == 0 {
 		// log the total resources being requested (daemonset + the pod)
-		cumulativeResources := resources.Merge(n.daemonResources, resources.RequestsForPods(pod))
-		return fmt.Errorf("no instance type satisfied resources %s and requirements %s (%s)", resources.String(cumulativeResources), nodeClaimRequirements, filtered.FailureReason())
+		return fmt.Errorf("no instance type satisfied resources %s and requirements %s (%s)", resources.String(resources.RequestsForPods(pod)), nodeClaimRequirements, filtered.FailureReason())
 	}
 
 	// Update node
@@ -227,7 +225,7 @@ func (r filterResults) FailureReason() string {
 }
 
 //nolint:gocyclo
-func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, requests v1.ResourceList) filterResults {
+func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, daemonSpecs map[*cloudprovider.InstanceType]v1.ResourceList, requests v1.ResourceList) filterResults {
 	results := filterResults{
 		requests:        requests,
 		requirementsMet: false,
@@ -243,7 +241,7 @@ func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceTy
 		// the tradeoff to not short circuiting on the filtering is that we can report much better error messages
 		// about why scheduling failed
 		itCompat := compatible(it, requirements)
-		itFits := fits(it, requests)
+		itFits := fits(it, resources.Merge(requests, daemonSpecs[it]))
 		// TODO: change Get() on offerings to be closer to the implementation of Any() on requirements
 		_, itHasOffering := it.Offerings.Available().Get(requirements)
 
